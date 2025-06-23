@@ -1,0 +1,1864 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>우리 아이 시간표</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/lucide-static@0.263.1/font/lucide.css">
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        import React, { useState, useEffect } from 'react';
+import { Bell, Calendar, Clock, Plus, Edit2, Save, X, Trash2, Settings, Copy, Sun, School, AlertCircle, HelpCircle, ChevronRight, ChevronLeft, Share2, Camera, Link } from 'lucide-react';
+
+const TimetableApp = () => {
+  // 첫 방문 체크
+  const [isFirstVisit, setIsFirstVisit] = useState(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return !localStorage.getItem('hasVisited');
+    }
+    return true;
+  });
+  
+  // 온보딩 단계
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  
+  // 기본값 정의
+  const DEFAULT_SCHEDULE_STRUCTURES = {
+    regular: [
+      { id: 'morning', name: '아침독서', start: '08:40', end: '08:50', isBreak: true },
+      { id: 'period1', name: '1교시', start: '08:50', end: '09:30', isBreak: false },
+      { id: 'period2', name: '2교시', start: '09:40', end: '10:20', isBreak: false },
+      { id: 'break1', name: '쉬는시간', start: '10:20', end: '10:30', isBreak: true },
+      { id: 'period3', name: '3교시', start: '10:30', end: '11:10', isBreak: false },
+      { id: 'period4', name: '4교시', start: '11:20', end: '12:00', isBreak: false },
+      { id: 'lunch', name: '점심시간', start: '12:00', end: '12:50', isBreak: true },
+      { id: 'period5', name: '5교시', start: '12:50', end: '13:30', isBreak: false }
+    ],
+    vacation: [
+      { id: 'morning', name: '오전수업', start: '09:00', end: '10:30', isBreak: false },
+      { id: 'break', name: '쉬는시간', start: '10:30', end: '10:40', isBreak: true },
+      { id: 'activity', name: '특별활동', start: '10:40', end: '12:00', isBreak: false }
+    ]
+  };
+
+  const DEFAULT_SCHOOL_SETTINGS = {
+    regular: { 
+      startTime: '08:50', 
+      periodDuration: 40, 
+      breakDuration: 10,
+      scheduleType: 'regular', // regular, block, mixed
+      shortDayEnabled: true, // 수금 단축수업
+      lunchDuration: 50,
+      morningReadingEnabled: true // 아침독서
+    },
+    vacation: { 
+      startTime: '09:00', 
+      periodDuration: 90, 
+      breakDuration: 10,
+      scheduleType: 'regular',
+      shortDayEnabled: false,
+      lunchDuration: 50,
+      morningReadingEnabled: false
+    }
+  };
+
+  const DEFAULT_AFTER_SCHOOL = {
+    regular: { 1: [], 2: [], 3: [], 4: [], 5: [] },
+    vacation: { 1: [], 2: [], 3: [], 4: [], 5: [] }
+  };
+
+  const DEFAULT_TIMETABLES = {
+    regular: { 1: {}, 2: {}, 3: {}, 4: {}, 5: {} },
+    vacation: { 1: {}, 2: {}, 3: {}, 4: {}, 5: {} }
+  };
+
+  const DEFAULT_SUBJECTS = [
+    '국어', '수학', '영어', '과학', '사회',
+    '체육', '음악', '미술', '도덕', '실과',
+    '통합교과(전담)', 
+    '창체', '자율', '동아리', '봉사', '진로',
+    '안전교육', '보건', '마을', '세계'
+  ];
+
+  // 학년별 기본 시간표 템플릿
+  const GRADE_TEMPLATES = {
+    '1-2학년': {
+      subjects: ['국어', '수학', '통합교과(전담)', '창체', '마을'],
+      scheduleType: 'block',
+      message: '1-2학년은 블록 수업이 일반적입니다'
+    },
+    '3-4학년': {
+      subjects: ['국어', '수학', '영어', '과학', '사회', '체육', '음악', '미술', '창체', '마을', '세계'],
+      scheduleType: 'regular',
+      message: '3-4학년부터 교과목이 세분화됩니다'
+    },
+    '5-6학년': {
+      subjects: ['국어', '수학', '영어', '과학', '사회', '체육', '음악', '미술', '실과', '창체', '세계'],
+      scheduleType: 'regular',
+      message: '5-6학년은 실과 과목이 추가됩니다'
+    }
+  };
+
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [activeTab, setActiveTab] = useState('today');
+  const [editMode, setEditMode] = useState(false);
+  const [selectedSubject, setSelectedSubject] = useState('');
+  const [newSubject, setNewSubject] = useState('');
+  const [autoAdjustTime, setAutoAdjustTime] = useState(true); // 시간 자동 조정
+  const [scheduleMode, setScheduleMode] = useState(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return localStorage.getItem('scheduleMode') || 'regular';
+    }
+    return 'regular';
+  });
+
+  // 학교 설정 (시작시간, 수업시간 등)
+  const [schoolSettings, setSchoolSettings] = useState(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('schoolSettings');
+        const parsed = saved ? JSON.parse(saved) : null;
+        if (parsed) {
+          // 기존 데이터에 새 필드 추가
+          return {
+            regular: {
+              ...DEFAULT_SCHOOL_SETTINGS.regular,
+              ...parsed.regular,
+              morningReadingEnabled: parsed.regular?.morningReadingEnabled ?? true
+            },
+            vacation: {
+              ...DEFAULT_SCHOOL_SETTINGS.vacation,
+              ...parsed.vacation
+            }
+          };
+        }
+      } catch (error) {
+        console.error('Error loading schoolSettings:', error);
+      }
+    }
+    return DEFAULT_SCHOOL_SETTINGS;
+  });
+  
+  // 교시 구조 - 정규/방학 구분
+  const [scheduleStructures, setScheduleStructures] = useState(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('scheduleStructures');
+        const parsed = saved ? JSON.parse(saved) : null;
+        if (parsed && parsed.regular && parsed.vacation) {
+          return parsed;
+        }
+      } catch (error) {
+        console.error('Error loading scheduleStructures:', error);
+      }
+    }
+    
+    return DEFAULT_SCHEDULE_STRUCTURES;
+  });
+
+  // 현재 활성화된 교시 구조
+  const scheduleStructure = scheduleStructures[scheduleMode];
+
+  // 방과후 프로그램 - 정규/방학 구분
+  const [afterSchoolPrograms, setAfterSchoolPrograms] = useState(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('afterSchoolPrograms');
+        const parsed = saved ? JSON.parse(saved) : null;
+        if (parsed && parsed.regular && parsed.vacation) {
+          return parsed;
+        }
+      } catch (error) {
+        console.error('Error loading afterSchoolPrograms:', error);
+      }
+    }
+    
+    return DEFAULT_AFTER_SCHOOL;
+  });
+  
+  // 자주 쓰는 과목
+  const [favoriteSubjects, setFavoriteSubjects] = useState(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('favoriteSubjects');
+        return saved ? JSON.parse(saved) : DEFAULT_SUBJECTS;
+      } catch (error) {
+        console.error('Error loading favoriteSubjects:', error);
+      }
+    }
+    return DEFAULT_SUBJECTS;
+  });
+  
+  // 시간표 데이터 - 정규/방학 구분
+  const [timetables, setTimetables] = useState(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('timetables');
+        const parsed = saved ? JSON.parse(saved) : null;
+        if (parsed && parsed.regular && parsed.vacation) {
+          return parsed;
+        }
+      } catch (error) {
+        console.error('Error loading timetables:', error);
+      }
+    }
+    
+    return DEFAULT_TIMETABLES;
+  });
+
+  const days = ['월', '화', '수', '목', '금'];
+
+  // 과목별 색상
+  const getSubjectColor = (subject) => {
+    if (!subject) return 'text-gray-400';
+    
+    const colorMap = {
+      '국어': 'bg-red-100 text-red-700 border-red-300',
+      '수학': 'bg-blue-100 text-blue-700 border-blue-300',
+      '영어': 'bg-purple-100 text-purple-700 border-purple-300',
+      '과학': 'bg-green-100 text-green-700 border-green-300',
+      '사회': 'bg-yellow-100 text-yellow-700 border-yellow-300',
+      '체육': 'bg-orange-100 text-orange-700 border-orange-300',
+      '음악': 'bg-pink-100 text-pink-700 border-pink-300',
+      '미술': 'bg-indigo-100 text-indigo-700 border-indigo-300',
+      '창체': 'bg-gray-100 text-gray-700 border-gray-300',
+      '자율': 'bg-violet-100 text-violet-700 border-violet-300',
+      '동아리': 'bg-emerald-100 text-emerald-700 border-emerald-300',
+      '봉사': 'bg-lime-100 text-lime-700 border-lime-300',
+      '진로': 'bg-sky-100 text-sky-700 border-sky-300',
+      '실과': 'bg-teal-100 text-teal-700 border-teal-300',
+      '도덕': 'bg-amber-100 text-amber-700 border-amber-300',
+      '통합교과(전담)': 'bg-rose-100 text-rose-700 border-rose-300',
+      '보건': 'bg-green-200 text-green-800 border-green-400',
+      '안전교육': 'bg-red-200 text-red-800 border-red-400',
+      '마을': 'bg-cyan-100 text-cyan-700 border-cyan-300',
+      '세계': 'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-300',
+      '선택형늘봄': 'bg-blue-200 text-blue-800 border-blue-400',
+      '맞춤형늘봄': 'bg-purple-200 text-purple-800 border-purple-400',
+      '돌봄교실': 'bg-green-200 text-green-800 border-green-400'
+    };
+    
+    // 통합교과(전담) 같은 경우 처리
+    if (subject === '통합교과(전담)') {
+      return colorMap['통합교과(전담)'];
+    }
+    
+    // 창체의 세부 활동
+    if (subject.includes('자율') || subject.includes('동아리') || 
+        subject.includes('봉사') || subject.includes('진로')) {
+      return colorMap[subject.split(' ')[0]] || colorMap['창체'];
+    }
+    
+    if (subject.includes('학원')) {
+      return 'bg-amber-100 text-amber-700 border-amber-300';
+    }
+    
+    return colorMap[subject] || 'bg-blue-100 text-blue-700 border-blue-300';
+  };
+
+  // 시간을 분으로 변환
+  const timeToMinutes = (time) => {
+    const [hour, min] = time.split(':').map(Number);
+    return hour * 60 + min;
+  };
+
+  // 분을 시간으로 변환
+  const minutesToTime = (minutes) => {
+    const hour = Math.floor(minutes / 60);
+    const min = minutes % 60;
+    return `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
+  };
+
+  // 시간 중복 체크
+  const checkTimeOverlap = (periods, newPeriod, excludeId = null) => {
+    const newStart = timeToMinutes(newPeriod.start);
+    const newEnd = timeToMinutes(newPeriod.end);
+    
+    return periods.some(period => {
+      if (period.id === excludeId) return false;
+      const start = timeToMinutes(period.start);
+      const end = timeToMinutes(period.end);
+      
+      return (newStart < end && newEnd > start);
+    });
+  };
+
+  // 시간순으로 정렬
+  const sortPeriods = (periods) => {
+    return [...periods].sort((a, b) => {
+      const timeA = timeToMinutes(a.start);
+      const timeB = timeToMinutes(b.start);
+      return timeA - timeB;
+    });
+  };
+
+  // 자동 시간 생성
+  const generateAutoSchedule = () => {
+    const settings = schoolSettings[scheduleMode];
+    const periods = [];
+    
+    // 아침독서 추가 (설정이 켜져있을 때)
+    if (settings.morningReadingEnabled) {
+      periods.push({
+        id: 'morning',
+        name: '아침독서',
+        start: '08:40',
+        end: '08:50',
+        isBreak: true
+      });
+    }
+    
+    if (settings.scheduleType === 'block') {
+      // 블록 시간표 (1-2학년 스타일)
+      periods.push(
+        { id: 'block1_1', name: '1블록(1,2교시)', start: '08:50', end: '10:10', isBreak: false },
+        { id: 'break1', name: '쉬는시간', start: '10:10', end: '10:40', isBreak: true },
+        { id: 'block2_1', name: '2블록(3,4교시)', start: '10:40', end: '12:00', isBreak: false },
+        { id: 'lunch', name: '점심시간', start: '12:00', end: '12:50', isBreak: true }
+      );
+      
+      if (!settings.shortDayEnabled) {
+        // 월화목 - 5교시 추가
+        periods.push(
+          { id: 'period5', name: '5교시', start: '12:50', end: '13:30', isBreak: false }
+        );
+      }
+    } else if (settings.scheduleType === 'mixed') {
+      // 혼합형 (블록+교시 표시)
+      periods.push(
+        { id: 'period1', name: '1교시', start: '08:50', end: '09:30', isBreak: false, blockName: '1블록' },
+        { id: 'period2', name: '2교시', start: '09:30', end: '10:10', isBreak: false, blockName: '1블록' },
+        { id: 'break1', name: '쉬는시간', start: '10:10', end: '10:40', isBreak: true },
+        { id: 'period3', name: '3교시', start: '10:40', end: '11:20', isBreak: false, blockName: '2블록' },
+        { id: 'period4', name: '4교시', start: '11:20', end: '12:00', isBreak: false, blockName: '2블록' },
+        { id: 'lunch', name: '점심시간', start: '12:00', end: '12:50', isBreak: true }
+      );
+      
+      if (!settings.shortDayEnabled) {
+        periods.push(
+          { id: 'period5', name: '5교시', start: '12:50', end: '13:30', isBreak: false }
+        );
+      }
+    } else {
+      // 일반 시간표
+      const startMinutes = timeToMinutes(settings.startTime);
+      let currentTime = startMinutes;
+      let periodCount = scheduleMode === 'regular' ? 6 : 3;
+      
+      for (let i = 1; i <= periodCount; i++) {
+        // 수업
+        periods.push({
+          id: `period${i}`,
+          name: `${i}교시`,
+          start: minutesToTime(currentTime),
+          end: minutesToTime(currentTime + settings.periodDuration),
+          isBreak: false
+        });
+        currentTime += settings.periodDuration;
+        
+        // 쉬는시간 (마지막 교시 후와 점심시간 제외)
+        if (i < periodCount && i !== (scheduleMode === 'regular' ? 4 : 2)) {
+          periods.push({
+            id: `break${i}`,
+            name: '쉬는시간',
+            start: minutesToTime(currentTime),
+            end: minutesToTime(currentTime + settings.breakDuration),
+            isBreak: true
+          });
+          currentTime += settings.breakDuration;
+        }
+        
+        // 점심시간
+        if (i === (scheduleMode === 'regular' ? 4 : 2)) {
+          periods.push({
+            id: 'lunch',
+            name: '점심시간',
+            start: minutesToTime(currentTime),
+            end: minutesToTime(currentTime + settings.lunchDuration),
+            isBreak: true
+          });
+          currentTime += settings.lunchDuration;
+        }
+      }
+    }
+    
+    // 수금 단축수업이면 별도 저장
+    if (settings.shortDayEnabled) {
+      const shortDayPeriods = periods.filter(p => 
+        !p.id.includes('period5') && p.id !== 'period5'
+      );
+      
+      setScheduleStructures(prev => ({
+        ...prev,
+        [scheduleMode]: periods,
+        [`${scheduleMode}_short`]: shortDayPeriods
+      }));
+    } else {
+      setScheduleStructures(prev => ({
+        ...prev,
+        [scheduleMode]: periods
+      }));
+    }
+  };
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem('timetables', JSON.stringify(timetables));
+    }
+  }, [timetables]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem('favoriteSubjects', JSON.stringify(favoriteSubjects));
+    }
+  }, [favoriteSubjects]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem('scheduleStructures', JSON.stringify(scheduleStructures));
+    }
+  }, [scheduleStructures]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem('afterSchoolPrograms', JSON.stringify(afterSchoolPrograms));
+    }
+  }, [afterSchoolPrograms]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem('scheduleMode', scheduleMode);
+    }
+  }, [scheduleMode]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem('schoolSettings', JSON.stringify(schoolSettings));
+    }
+  }, [schoolSettings]);
+
+  const addPeriod = () => {
+    const newId = `period_${Date.now()}`;
+    const currentSchedule = Array.isArray(scheduleStructure) ? scheduleStructure : [];
+    const lastPeriod = currentSchedule[currentSchedule.length - 1];
+    const newPeriod = {
+      id: newId,
+      name: '새 교시',
+      start: lastPeriod?.end || '14:00',
+      end: minutesToTime(timeToMinutes(lastPeriod?.end || '14:00') + 40),
+      isBreak: false
+    };
+    
+    const updatedSchedule = sortPeriods([...currentSchedule, newPeriod]);
+    
+    setScheduleStructures(prev => ({
+      ...prev,
+      [scheduleMode]: updatedSchedule
+    }));
+  };
+
+  const updatePeriod = (id, field, value) => {
+    setScheduleStructures(prev => {
+      let updated = prev[scheduleMode].map(period =>
+        period.id === id ? { ...period, [field]: value } : period
+      );
+      
+      // 자동 시간 조정
+      if (autoAdjustTime && (field === 'start' || field === 'end')) {
+        const sortedPeriods = sortPeriods(updated);
+        const currentIndex = sortedPeriods.findIndex(p => p.id === id);
+        
+        if (field === 'end' && currentIndex < sortedPeriods.length - 1) {
+          // 다음 교시 시작시간을 현재 종료시간으로 조정
+          const nextPeriod = sortedPeriods[currentIndex + 1];
+          updated = updated.map(p => 
+            p.id === nextPeriod.id ? { ...p, start: value } : p
+          );
+        } else if (field === 'start' && currentIndex > 0) {
+          // 이전 교시 종료시간을 현재 시작시간으로 조정
+          const prevPeriod = sortedPeriods[currentIndex - 1];
+          updated = updated.map(p => 
+            p.id === prevPeriod.id ? { ...p, end: value } : p
+          );
+        }
+      }
+      
+      // 시간이 변경된 경우 재정렬
+      if (field === 'start' || field === 'end') {
+        return {
+          ...prev,
+          [scheduleMode]: sortPeriods(updated)
+        };
+      }
+      
+      return {
+        ...prev,
+        [scheduleMode]: updated
+      };
+    });
+  };
+
+  const deletePeriod = (id) => {
+    // 교시 삭제 시 해당 교시의 모든 과목 데이터도 삭제
+    setScheduleStructures(prev => ({
+      ...prev,
+      [scheduleMode]: prev[scheduleMode].filter(period => period.id !== id)
+    }));
+    
+    // 해당 교시의 시간표 데이터도 삭제
+    setTimetables(prev => {
+      const newTimetables = { ...prev };
+      for (let day = 1; day <= 5; day++) {
+        if (newTimetables[scheduleMode][day] && newTimetables[scheduleMode][day][id]) {
+          delete newTimetables[scheduleMode][day][id];
+        }
+      }
+      return newTimetables;
+    });
+  };
+
+  const updateSchoolSettings = (field, value) => {
+    setSchoolSettings(prev => ({
+      ...prev,
+      [scheduleMode]: {
+        ...prev[scheduleMode],
+        [field]: field === 'startTime' || field === 'scheduleType' 
+          ? value 
+          : field === 'shortDayEnabled' || field === 'morningReadingEnabled'
+          ? value 
+          : Number(value)
+      }
+    }));
+  };
+
+  const addAfterSchoolProgram = (day) => {
+    const programs = afterSchoolPrograms[scheduleMode][day] || [];
+    const lastProgram = programs[programs.length - 1];
+    const newProgram = {
+      id: Date.now(),
+      name: '',
+      start: lastProgram?.end || '14:00',
+      end: '15:00'
+    };
+    
+    setAfterSchoolPrograms(prev => ({
+      ...prev,
+      [scheduleMode]: {
+        ...prev[scheduleMode],
+        [day]: [...programs, newProgram]
+      }
+    }));
+  };
+
+  const updateAfterSchoolProgram = (day, id, field, value) => {
+    setAfterSchoolPrograms(prev => ({
+      ...prev,
+      [scheduleMode]: {
+        ...prev[scheduleMode],
+        [day]: prev[scheduleMode][day].map(program =>
+          program.id === id ? { ...program, [field]: value } : program
+        )
+      }
+    }));
+  };
+
+  const deleteAfterSchoolProgram = (day, id) => {
+    setAfterSchoolPrograms(prev => ({
+      ...prev,
+      [scheduleMode]: {
+        ...prev[scheduleMode],
+        [day]: prev[scheduleMode][day].filter(program => program.id !== id)
+      }
+    }));
+  };
+
+  const updateSubject = (day, periodId, subject) => {
+    setTimetables(prev => ({
+      ...prev,
+      [scheduleMode]: {
+        ...prev[scheduleMode],
+        [day]: {
+          ...prev[scheduleMode][day],
+          [periodId]: subject
+        }
+      }
+    }));
+  };
+
+  const addFavoriteSubject = () => {
+    if (newSubject && !favoriteSubjects.includes(newSubject)) {
+      setFavoriteSubjects(prev => [...prev, newSubject]);
+      setNewSubject('');
+    }
+  };
+
+  const removeFavoriteSubject = (subject) => {
+    setFavoriteSubjects(prev => prev.filter(s => s !== subject));
+  };
+
+  const handleCellClick = (day, periodId) => {
+    if (editMode) {
+      // 수금 단축수업일 때 5교시 입력 방지
+      const isShortDay = (day === 3 || day === 5) && schoolSettings[scheduleMode].shortDayEnabled;
+      if (isShortDay && (periodId === 'period5' || periodId.includes('period5'))) {
+        return;
+      }
+      
+      if (selectedSubject === '지우기') {
+        updateSubject(day, periodId, '');
+      } else if (selectedSubject) {
+        updateSubject(day, periodId, selectedSubject);
+      }
+    }
+  };
+
+  const getTodaySchedule = () => {
+    const today = currentTime.getDay();
+    if (today === 0 || today === 6) return { periods: [], afterSchool: [], dayIndex: today };
+    
+    // 수금 단축수업 체크
+    const isShortDay = (today === 3 || today === 5) && 
+                       schoolSettings[scheduleMode].shortDayEnabled &&
+                       scheduleStructures[`${scheduleMode}_short`];
+    
+    const periods = isShortDay 
+      ? scheduleStructures[`${scheduleMode}_short`] || []
+      : scheduleStructure || [];
+    
+    const afterSchool = afterSchoolPrograms[scheduleMode][today] || [];
+    
+    return { periods, afterSchool, dayIndex: today, isShortDay };
+  };
+
+  const getEndTime = (dayIndex) => {
+    const programs = afterSchoolPrograms[scheduleMode][dayIndex] || [];
+    if (programs.length > 0) {
+      const lastProgram = programs[programs.length - 1];
+      return lastProgram.end;
+    }
+    
+    // 수금 단축수업 체크
+    const isShortDay = (dayIndex === 3 || dayIndex === 5) && 
+                       schoolSettings[scheduleMode].shortDayEnabled;
+    
+    if (isShortDay && scheduleStructures[`${scheduleMode}_short`]) {
+      const shortDaySchedule = scheduleStructures[`${scheduleMode}_short`];
+      const sortedPeriods = sortPeriods(shortDaySchedule);
+      const lastPeriod = sortedPeriods[sortedPeriods.length - 1];
+      return lastPeriod?.end || '12:50';
+    }
+    
+    if (Array.isArray(scheduleStructure)) {
+      const sortedPeriods = sortPeriods(scheduleStructure);
+      const lastPeriod = sortedPeriods[sortedPeriods.length - 1];
+      return lastPeriod?.end || '13:30';
+    }
+    
+    return '13:30';
+  };
+
+  const clearAllData = () => {
+    if (window.confirm('모든 데이터를 초기화하시겠습니까?')) {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        localStorage.clear();
+      }
+      window.location.reload();
+    }
+  };
+
+  // 시간표 텍스트로 변환
+  const generateTimetableText = () => {
+    const today = new Date();
+    const dateStr = today.toLocaleDateString('ko-KR', { 
+      year: 'numeric',
+      month: 'long', 
+      day: 'numeric' 
+    });
+    
+    let text = `📚 우리 아이 시간표\n`;
+    text += `📅 ${dateStr} 기준\n`;
+    text += `${scheduleMode === 'vacation' ? '🌞 방학 중' : '🏫 학기 중'}\n\n`;
+    
+    // 오늘 시간표 다시 계산
+    const todayDay = today.getDay();
+    
+    if (todayDay > 0 && todayDay < 6) {
+      // 수금 단축수업 체크
+      const isShortDay = (todayDay === 3 || todayDay === 5) && 
+                         schoolSettings[scheduleMode].shortDayEnabled &&
+                         scheduleStructures[`${scheduleMode}_short`];
+      
+      const periods = isShortDay 
+        ? scheduleStructures[`${scheduleMode}_short`] || []
+        : scheduleStructure || [];
+      
+      const afterSchool = afterSchoolPrograms[scheduleMode][todayDay] || [];
+      const currentTimetable = timetables[scheduleMode];
+      
+      text += `【오늘의 시간표】\n`;
+      periods.forEach(period => {
+        if (period.name === '아침독서') {
+          text += `${period.start}~${period.end} 📚 ${period.name}\n`;
+        } else if (period.name === '점심시간') {
+          text += `${period.start}~${period.end} ${period.name}: 🍽️ 급식\n`;
+        } else if (!period.isBreak) {
+          const subject = currentTimetable[todayDay]?.[period.id] || '미정';
+          text += `${period.start}~${period.end} ${period.name}: ${subject}\n`;
+        }
+      });
+      
+      if (afterSchool.length > 0) {
+        text += `\n【방과후】\n`;
+        afterSchool.forEach(program => {
+          text += `${program.start}~${program.end} ${program.name || '미정'}\n`;
+        });
+      }
+      
+      text += `\n💙 하교시간: ${getEndTime(todayDay)}\n`;
+    } else {
+      // 주말
+      text += `🎉 오늘은 즐거운 주말이에요!\n\n`;
+      text += `【월요일 시간표 미리보기】\n`;
+      const mondayPeriods = scheduleStructure || [];
+      const currentTimetable = timetables[scheduleMode];
+      
+      mondayPeriods.forEach(period => {
+        if (period.name === '아침독서') {
+          text += `${period.start}~${period.end} 📚 ${period.name}\n`;
+        } else if (period.name === '점심시간') {
+          text += `${period.start}~${period.end} ${period.name}: 🍽️ 급식\n`;
+        } else if (!period.isBreak) {
+          const subject = currentTimetable[1]?.[period.id] || '미정';
+          text += `${period.start}~${period.end} ${period.name}: ${subject}\n`;
+        }
+      });
+    }
+    
+    text += `\n※ 자세한 시간표는 링크에서 확인하세요`;
+    
+    return text;
+  };
+
+  // 공유하기
+  const shareTimeTable = async (method) => {
+    const text = generateTimetableText();
+    const url = window.location.href;
+    const title = '우리 아이 시간표';
+    
+    if (method === 'webshare' && navigator.share) {
+      try {
+        await navigator.share({
+          title: title,
+          text: text,
+          url: url
+        });
+      } catch (err) {
+        console.log('공유 취소됨');
+      }
+    } else if (method === 'copy') {
+      const shareText = `${text}\n\n🔗 ${url}`;
+      
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(shareText);
+        alert('시간표가 클립보드에 복사되었습니다!\n카톡이나 문자에 붙여넣기 하세요.');
+      } else {
+        // 구형 브라우저 대응
+        const textarea = document.createElement('textarea');
+        textarea.value = shareText;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        alert('시간표가 복사되었습니다!');
+      }
+    }
+  };
+
+  const { periods: todayPeriods, afterSchool: todayAfterSchool, dayIndex, isShortDay } = getTodaySchedule();
+  const timetable = timetables[scheduleMode];
+
+  // 온보딩 화면
+  if (isFirstVisit) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-6 md:p-8">
+          {onboardingStep === 0 && (
+            <div className="text-center space-y-6">
+              <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-100 rounded-full">
+                <School className="w-10 h-10 text-blue-600" />
+              </div>
+              <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
+                우리 아이 시간표
+              </h1>
+              <p className="text-gray-600">
+                초등학교 시간표를 쉽게 관리하세요!<br/>
+                복잡한 학교 일정을 한눈에 확인할 수 있어요.
+              </p>
+              <button
+                onClick={() => setOnboardingStep(1)}
+                className="w-full bg-blue-500 text-white py-3 rounded-lg font-medium hover:bg-blue-600 transition-colors flex items-center justify-center gap-2"
+              >
+                시작하기
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
+          )}
+          
+          {onboardingStep === 1 && (
+            <div className="space-y-6">
+              <h2 className="text-xl font-bold text-gray-800">
+                자녀의 학년을 선택해주세요
+              </h2>
+              <div className="space-y-3">
+                {Object.entries(GRADE_TEMPLATES).map(([grade, template]) => (
+                  <button
+                    key={grade}
+                    onClick={() => {
+                      setFavoriteSubjects(template.subjects);
+                      updateSchoolSettings('scheduleType', template.scheduleType);
+                      setTimeout(() => generateAutoSchedule(), 100);
+                      setOnboardingStep(2);
+                    }}
+                    className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all text-left"
+                  >
+                    <div className="font-medium text-gray-800">{grade}</div>
+                    <div className="text-sm text-gray-500 mt-1">{template.message}</div>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setOnboardingStep(0)}
+                className="w-full py-2 text-gray-500 hover:text-gray-700 flex items-center justify-center gap-1"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                이전
+              </button>
+            </div>
+          )}
+          
+          {onboardingStep === 2 && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
+                  <Save className="w-8 h-8 text-green-600" />
+                </div>
+                <h2 className="text-xl font-bold text-gray-800 mb-2">
+                  준비 완료!
+                </h2>
+                <p className="text-gray-600">
+                  기본 시간표가 설정되었어요.<br/>
+                  이제 과목을 추가해보세요!
+                </p>
+              </div>
+              
+              <div className="bg-blue-50 rounded-lg p-4 space-y-2">
+                <p className="text-sm font-medium text-blue-800">💡 사용 팁</p>
+                <ul className="text-sm text-blue-600 space-y-1">
+                  <li>• 편집 버튼을 눌러 시간표 수정</li>
+                  <li>• 과목을 선택하고 칸을 클릭해 입력</li>
+                  <li>• 방과후 프로그램도 추가 가능</li>
+                </ul>
+              </div>
+              
+              <button
+                onClick={() => {
+                  setIsFirstVisit(false);
+                  if (typeof window !== 'undefined' && window.localStorage) {
+                    localStorage.setItem('hasVisited', 'true');
+                  }
+                }}
+                className="w-full bg-blue-500 text-white py-3 rounded-lg font-medium hover:bg-blue-600 transition-colors"
+              >
+                시간표 만들기
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* 헤더 */}
+      <div className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex justify-between items-center">
+            <h1 className="text-xl md:text-2xl font-bold text-gray-800">우리 아이 시간표</h1>
+            <div className="flex gap-1 md:gap-2">
+              <button
+                onClick={() => setScheduleMode(scheduleMode === 'regular' ? 'vacation' : 'regular')}
+                className={`px-3 py-2 md:px-4 md:py-2 rounded-lg font-medium transition-colors flex items-center gap-1 md:gap-2 text-sm md:text-base ${
+                  scheduleMode === 'vacation' 
+                    ? 'bg-orange-500 text-white hover:bg-orange-600' 
+                    : 'bg-gray-500 text-white hover:bg-gray-600'
+                }`}
+              >
+                {scheduleMode === 'vacation' ? <Sun className="w-4 h-4" /> : <School className="w-4 h-4" />}
+                <span className="hidden sm:inline">{scheduleMode === 'vacation' ? '방학' : '학기중'}</span>
+              </button>
+              <button
+                onClick={() => setEditMode(!editMode)}
+                className={`px-3 py-2 md:px-4 md:py-2 rounded-lg font-medium transition-colors flex items-center gap-1 md:gap-2 text-sm md:text-base ${
+                  editMode 
+                    ? 'bg-green-500 text-white hover:bg-green-600' 
+                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                }`}
+              >
+                {editMode ? <Save className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
+                <span className="hidden sm:inline">{editMode ? '저장' : '편집'}</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (window.confirm('사용법을 다시 보시겠습니까?')) {
+                    setIsFirstVisit(true);
+                    setOnboardingStep(0);
+                  }
+                }}
+                className="p-2 text-gray-500 hover:text-gray-700"
+                title="도움말"
+              >
+                <HelpCircle className="w-4 h-4 md:w-5 md:h-5" />
+              </button>
+              <button
+                onClick={() => {
+                  if (navigator.share) {
+                    shareTimeTable('webshare');
+                  } else {
+                    shareTimeTable('copy');
+                  }
+                }}
+                className="px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 flex items-center gap-1 md:gap-2 text-sm md:text-base font-medium shadow-md hover:shadow-lg transition-all"
+                title="공유하기"
+              >
+                <Share2 className="w-4 h-4" />
+                <span className="hidden sm:inline">공유</span>
+              </button>
+              <button
+                onClick={clearAllData}
+                className="p-2 text-gray-500 hover:text-gray-700"
+                title="데이터 초기화"
+              >
+                <Settings className="w-4 h-4 md:w-5 md:h-5" />
+              </button>
+            </div>
+          </div>
+          {editMode && (
+            <div className="mt-2 text-sm text-blue-600 bg-blue-50 rounded-lg px-3 py-2 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              편집 모드입니다. 과목을 선택한 후 시간표를 클릭하세요!
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 탭 메뉴 */}
+      <div className="bg-white border-b sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex gap-2 md:gap-6 overflow-x-auto">
+            <button
+              onClick={() => setActiveTab('today')}
+              className={`py-3 px-2 md:px-1 border-b-2 font-medium transition-colors whitespace-nowrap text-sm md:text-base ${
+                activeTab === 'today' 
+                  ? 'border-blue-500 text-blue-600' 
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              오늘 일정
+            </button>
+            <button
+              onClick={() => setActiveTab('timetable')}
+              className={`py-3 px-2 md:px-1 border-b-2 font-medium transition-colors whitespace-nowrap text-sm md:text-base ${
+                activeTab === 'timetable' 
+                  ? 'border-blue-500 text-blue-600' 
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              주간 시간표
+            </button>
+            <button
+              onClick={() => setActiveTab('schedule')}
+              className={`py-3 px-2 md:px-1 border-b-2 font-medium transition-colors whitespace-nowrap text-sm md:text-base ${
+                activeTab === 'schedule' 
+                  ? 'border-blue-500 text-blue-600' 
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              시간 설정
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 py-4 md:py-6">
+        {/* 오늘 일정 탭 */}
+        {activeTab === 'today' && (
+          <div className="space-y-4 md:space-y-6">
+            <div className={`rounded-xl p-4 md:p-6 text-white ${
+              scheduleMode === 'vacation' 
+                ? 'bg-gradient-to-r from-orange-500 to-yellow-600' 
+                : 'bg-gradient-to-r from-blue-500 to-purple-600'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  {scheduleMode === 'vacation' && <Sun className="w-5 h-5 md:w-6 md:h-6" />}
+                  <h2 className="text-xl md:text-2xl font-bold">
+                    {currentTime.toLocaleDateString('ko-KR', { 
+                      month: 'long', 
+                      day: 'numeric',
+                      weekday: 'long'
+                    })}
+                  </h2>
+                </div>
+                <button
+                  onClick={() => {
+                    if (navigator.share) {
+                      shareTimeTable('webshare');
+                    } else {
+                      shareTimeTable('copy');
+                    }
+                  }}
+                  className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition-colors"
+                  title="시간표 공유하기"
+                >
+                  <Share2 className="w-5 h-5" />
+                </button>
+              </div>
+              <p className="text-white/80 text-sm md:text-base">
+                {scheduleMode === 'vacation' ? '방학 중' : '학기 중'} · 
+                {dayIndex === 0 || dayIndex === 6 ? '주말' : 
+                  isShortDay ? '단축수업 (급식 후 하교)' : `최종 하교: ${getEndTime(dayIndex)}`}
+              </p>
+            </div>
+
+            {/* 주말 안내 */}
+            {(dayIndex === 0 || dayIndex === 6) && (
+              <div className="bg-yellow-50 rounded-lg p-6 text-center">
+                <Sun className="w-12 h-12 text-yellow-500 mx-auto mb-3" />
+                <p className="text-lg font-medium text-gray-800 mb-2">즐거운 주말이에요! 🎉</p>
+                <p className="text-sm text-gray-600">월요일 시간표를 미리 확인해보세요</p>
+                <button
+                  onClick={() => setActiveTab('timetable')}
+                  className="mt-3 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                  주간 시간표 보기 →
+                </button>
+              </div>
+            )}
+            
+            {/* 공유 버튼 섹션 - 항상 표시 */}
+            <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg shadow p-4 border-2 border-green-200">
+              <h3 className="font-semibold text-gray-800 mb-3 text-base flex items-center justify-center gap-2">
+                <span className="text-2xl">📤</span>
+                시간표 공유하기
+                <span className="text-2xl">💬</span>
+              </h3>
+              <div className={`grid ${navigator.share ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
+                {navigator.share && (
+                  <button
+                    onClick={() => shareTimeTable('webshare')}
+                    className="flex items-center justify-center gap-2 py-3 px-4 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-lg hover:shadow-xl transform hover:scale-105"
+                  >
+                    <Share2 className="w-5 h-5" />
+                    <span className="font-medium">카톡/문자 공유</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => shareTimeTable('copy')}
+                  className={`flex items-center justify-center gap-2 py-3 px-4 ${
+                    navigator.share ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'
+                  } text-white rounded-lg transition-colors shadow-lg hover:shadow-xl transform hover:scale-105`}
+                >
+                  <Copy className="w-5 h-5" />
+                  <span className="font-medium">{navigator.share ? '복사하기' : '시간표 복사하기'}</span>
+                </button>
+              </div>
+              <p className="text-xs text-gray-600 mt-3 text-center font-medium">
+                {navigator.share 
+                  ? '👵 할머니, 👴 할아버지, 👨‍👩‍👧‍👦 가족들과 시간표를 공유해보세요!'
+                  : '📋 복사한 내용을 카톡이나 문자에 붙여넣어 공유하세요!'}
+              </p>
+            </div>
+
+            {/* 정규 수업 */}
+            {todayPeriods.length > 0 ? (
+              <div className="bg-white rounded-lg shadow">
+                <h3 className="font-semibold text-gray-800 p-4 border-b text-base md:text-lg">
+                  {scheduleMode === 'vacation' ? '방학 프로그램' : '정규 수업'}
+                </h3>
+                <div className="p-3 md:p-4 space-y-2">
+                  {todayPeriods.map((period) => {
+                    const subject = dayIndex && !period.isBreak ? timetable[dayIndex]?.[period.id] : '';
+                    
+                    if (period.name === '아침독서') {
+                      return (
+                        <div key={period.id} className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm md:text-base font-medium text-yellow-800">📚 {period.name}</p>
+                            <p className="text-xs md:text-sm text-yellow-600">
+                              {period.start} - {period.end}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }
+                    
+                    if (period.isBreak && period.name !== '점심시간') {
+                      return (
+                        <div key={period.id} className="flex items-center justify-between p-2 md:p-2 bg-gray-50 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs md:text-sm text-gray-600">{period.name}</p>
+                            <p className="text-xs text-gray-500">
+                              {period.start} - {period.end}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }
+                    
+                    return (
+                      <div key={period.id} className={`flex items-center justify-between p-3 md:p-3 rounded-lg ${
+                        period.name === '점심시간' ? 'bg-orange-50' : 'bg-gray-50'
+                      }`}>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm md:text-base">{period.name}</p>
+                          <p className="text-xs md:text-sm text-gray-500">
+                            {period.start} - {period.end}
+                          </p>
+                        </div>
+                        <div className="ml-2">
+                          {period.name === '점심시간' ? (
+                            <p className="text-orange-600 text-sm md:text-base">
+                              🍽️ 급식
+                            </p>
+                          ) : (
+                            <p className={`font-medium rounded px-2 py-1 md:px-3 md:py-1 text-xs md:text-sm ${
+                              subject ? getSubjectColor(subject) : 'text-gray-400'
+                            }`}>
+                              {subject || '-'}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  
+                  {/* 시간표가 비어있을 때 안내 */}
+                  {todayPeriods.filter(p => !p.isBreak).every(p => !timetable[dayIndex]?.[p.id]) && (
+                    <div className="mt-4 p-4 bg-blue-50 rounded-lg text-center">
+                      <p className="text-sm text-blue-600 mb-2">아직 시간표가 비어있어요!</p>
+                      <button
+                        onClick={() => setActiveTab('timetable')}
+                        className="text-sm font-medium text-blue-700 hover:text-blue-800"
+                      >
+                        시간표 입력하러 가기 →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white rounded-lg shadow p-6 text-center">
+                <School className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                <p className="text-gray-600 mb-3">시간표 설정이 필요해요</p>
+                <button
+                  onClick={() => setActiveTab('schedule')}
+                  className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                  시간 설정하러 가기 →
+                </button>
+              </div>
+            )}
+
+            {/* 방과후 프로그램 */}
+            {todayAfterSchool.length > 0 && (
+              <div className="bg-white rounded-lg shadow">
+                <h3 className="font-semibold text-gray-800 p-4 border-b text-base md:text-lg">
+                  {scheduleMode === 'vacation' ? '오후 프로그램' : '방과후 프로그램'}
+                </h3>
+                <div className="p-3 md:p-4 space-y-2">
+                  {todayAfterSchool.map((program) => (
+                    <div key={program.id} className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sm md:text-base">{program.name || '프로그램명 없음'}</p>
+                        <p className="text-xs md:text-sm text-gray-500">
+                          {program.start} - {program.end}
+                        </p>
+                      </div>
+                      <p className={`font-medium rounded px-2 py-1 md:px-3 md:py-1 text-xs md:text-sm ml-2 ${
+                        getSubjectColor(program.name)
+                      }`}>
+                        {program.name || '-'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* 공유 버튼 섹션 */}
+            <div className="bg-white rounded-lg shadow p-4">
+              <h3 className="font-semibold text-gray-800 mb-3 text-base">시간표 공유하기</h3>
+              <div className={`grid ${navigator.share ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
+                {navigator.share && (
+                  <button
+                    onClick={() => shareTimeTable('webshare')}
+                    className="flex items-center justify-center gap-2 py-3 px-4 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
+                  >
+                    <Share2 className="w-5 h-5" />
+                    <span className="font-medium">카톡/문자 공유</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => shareTimeTable('copy')}
+                  className={`flex items-center justify-center gap-2 py-3 px-4 ${
+                    navigator.share ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600'
+                  } text-white rounded-lg transition-colors`}
+                >
+                  <Copy className="w-5 h-5" />
+                  <span className="font-medium">{navigator.share ? '복사하기' : '시간표 복사하기'}</span>
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-3 text-center">
+                {navigator.share 
+                  ? '할머니, 할아버지, 가족들과 시간표를 공유해보세요! 📱'
+                  : '복사한 내용을 카톡이나 문자에 붙여넣어 공유하세요! 📋'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* 주간 시간표 탭 */}
+        {activeTab === 'timetable' && (
+          <div className="space-y-4">
+            {/* 과목 선택 패널 */}
+            {editMode && (
+              <div className="bg-white rounded-lg shadow p-4">
+                <div className="mb-4">
+                  <h3 className="text-sm font-medium text-gray-700 mb-3">
+                    📝 과목 선택 (클릭해서 선택 → 시간표 칸 클릭)
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => setSelectedSubject(selectedSubject === '지우기' ? '' : '지우기')}
+                      className={`px-4 py-2 rounded-full text-sm font-medium border-2 transition-all ${
+                        selectedSubject === '지우기' 
+                          ? 'bg-red-100 text-red-700 border-red-300 scale-105 shadow-lg ring-2 ring-red-300' 
+                          : 'bg-gray-100 text-gray-700 border-gray-300 hover:border-gray-400'
+                      }`}
+                    >
+                      <X className="w-4 h-4 inline-block mr-1" />
+                      지우기
+                    </button>
+                    {favoriteSubjects.map(subj => (
+                      <div key={subj} className="relative group">
+                        <button
+                          onClick={() => setSelectedSubject(subj === selectedSubject ? '' : subj)}
+                          className={`px-4 py-2 rounded-full text-sm font-medium border-2 transition-all ${
+                            selectedSubject === subj 
+                              ? `${getSubjectColor(subj)} scale-105 shadow-lg ring-2 ring-blue-300` 
+                              : `${getSubjectColor(subj)} border-transparent hover:border-current hover:scale-105`
+                          }`}
+                        >
+                          {selectedSubject === subj && '✓ '}
+                          {subj}
+                        </button>
+                        <button
+                          onClick={() => removeFavoriteSubject(subj)}
+                          className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-600"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="border-t pt-3">
+                  <p className="text-xs text-gray-500 mb-2">자주 쓰는 과목 추가하기:</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newSubject}
+                      onChange={(e) => setNewSubject(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && addFavoriteSubject()}
+                      placeholder="새 과목명 입력"
+                      className="flex-1 px-3 py-2 border rounded-lg text-sm md:text-base"
+                    />
+                    <button
+                      onClick={addFavoriteSubject}
+                      className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm md:text-base font-medium"
+                    >
+                      추가
+                    </button>
+                  </div>
+                </div>
+                
+                {selectedSubject && (
+                  <div className="mt-3 p-2 bg-blue-50 rounded-lg flex items-center gap-2">
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${getSubjectColor(selectedSubject)}`}>
+                      {selectedSubject}
+                    </span>
+                    <span className="text-sm text-blue-600">선택됨 → 시간표를 클릭하세요!</span>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* 정규 시간표 */}
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+              <div className="flex justify-between items-center p-4 border-b">
+                <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                  {scheduleMode === 'vacation' ? '방학 프로그램' : '정규 수업'}
+                  {scheduleMode === 'vacation' && <Sun className="w-4 h-4 text-orange-500" />}
+                </h3>
+                <button
+                  onClick={() => {
+                    if (navigator.share) {
+                      shareTimeTable('webshare');
+                    } else {
+                      shareTimeTable('copy');
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 flex items-center gap-1 text-sm font-medium"
+                  title="시간표 공유하기"
+                >
+                  <Share2 className="w-4 h-4" />
+                  공유
+                </button>
+              </div>
+              
+              
+              {/* 시간표가 완전히 비어있을 때 안내 */}
+              {!editMode && Object.values(timetable).every(day => 
+                Object.values(day).every(subject => !subject)
+              ) && (
+                <div className="p-8 text-center bg-blue-50">
+                  <School className="w-16 h-16 text-blue-400 mx-auto mb-4" />
+                  <h4 className="text-lg font-medium text-gray-800 mb-2">
+                    시간표를 입력해보세요!
+                  </h4>
+                  <p className="text-sm text-gray-600 mb-4">
+                    편집 버튼을 눌러 과목을 추가할 수 있어요
+                  </p>
+                  <button
+                    onClick={() => setEditMode(true)}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-medium"
+                  >
+                    <Edit2 className="w-4 h-4 inline-block mr-2" />
+                    시간표 편집하기
+                  </button>
+                </div>
+              )}
+              
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="p-3 text-left text-sm sticky left-0 bg-gray-50">시간</th>
+                      {days.map((day, index) => (
+                        <th key={index} className="p-3 text-center text-sm min-w-[100px]">{day}요일</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.isArray(scheduleStructure) && scheduleStructure.map((period) => {
+                      // 모든 교시 표시 (쉬는시간 포함)
+                      if (period.name === '점심시간') {
+                        return (
+                          <tr key={period.id} className="border-t">
+                            <td className="p-3 text-sm sticky left-0 bg-white">
+                              <div className="font-medium">{period.name}</div>
+                              <div className="text-xs text-gray-500">{period.start}-{period.end}</div>
+                            </td>
+                            {days.map((_, dayNum) => (
+                              <td key={dayNum} className="p-2">
+                                <div className="bg-orange-100 text-orange-700 rounded p-2 text-center text-sm">
+                                  급식
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      }
+                      
+                      if (period.name === '아침독서') {
+                        return (
+                          <tr key={period.id} className="border-t bg-yellow-50">
+                            <td className="p-3 text-sm sticky left-0 bg-yellow-50">
+                              <div className="font-medium text-yellow-800">📚 {period.name}</div>
+                              <div className="text-xs text-yellow-600">{period.start}-{period.end}</div>
+                            </td>
+                            {days.map((_, dayNum) => (
+                              <td key={dayNum} className="p-2">
+                                <div className="text-center text-sm text-yellow-700">
+                                  📖
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      }
+                      
+                      if (period.isBreak) {
+                        return (
+                          <tr key={period.id} className="border-t bg-gray-50">
+                            <td className="p-3 text-sm sticky left-0 bg-gray-50">
+                              <div className="font-medium text-gray-600">{period.name}</div>
+                              <div className="text-xs text-gray-500">{period.start}-{period.end}</div>
+                            </td>
+                            {days.map((_, dayNum) => (
+                              <td key={dayNum} className="p-2">
+                                <div className="text-center text-sm text-gray-500">
+                                  -
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      }
+                      
+                      return (
+                        <tr key={period.id} className="border-t">
+                          <td className="p-3 text-sm sticky left-0 bg-white">
+                            <div className="font-medium">
+                              {period.name}
+                              {period.blockName && (
+                                <span className="text-xs text-gray-500 ml-1">({period.blockName})</span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-500">{period.start}-{period.end}</div>
+                          </td>
+                          {days.map((_, dayNum) => {
+                            const dayIndex = dayNum + 1;
+                            const isShortDay = (dayIndex === 3 || dayIndex === 5) && 
+                                             schoolSettings[scheduleMode].shortDayEnabled;
+                            
+                            // 수금 단축수업일 때 5교시는 비활성화
+                            if (isShortDay && (period.id === 'period5' || period.id.includes('period5'))) {
+                              return (
+                                <td key={dayNum} className="p-2 bg-gray-100">
+                                  <div className="text-center text-sm text-gray-400">
+                                    -
+                                  </div>
+                                </td>
+                              );
+                            }
+                            
+                            const subject = timetable[dayIndex]?.[period.id] || '';
+                            
+                            return (
+                              <td 
+                                key={dayNum} 
+                                className={`p-2 ${editMode && !isShortDay ? 'cursor-pointer hover:bg-gray-50' : ''} transition-colors`}
+                                onClick={() => !isShortDay && handleCellClick(dayIndex, period.id)}
+                              >
+                                <div className={`rounded p-2 text-center text-sm font-medium border transition-all ${
+                                  subject ? getSubjectColor(subject) : 'text-gray-400 border-gray-200'
+                                } ${editMode && !isShortDay ? 'hover:scale-105 hover:shadow-md' : ''}`}>
+                                  {subject || (editMode ? '클릭' : '-')}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                    
+                    {/* 수금 단축수업 안내 */}
+                    {schoolSettings[scheduleMode].shortDayEnabled && (
+                      <tr className="border-t bg-yellow-50">
+                        <td colSpan={6} className="p-2 text-center text-sm text-yellow-800">
+                          ※ 수·금요일은 급식 후 하교 (12:50)
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 방과후 프로그램 */}
+            <div className="bg-white rounded-lg shadow">
+              <h3 className="font-semibold text-gray-800 p-4 border-b">
+                {scheduleMode === 'vacation' ? '오후 프로그램' : '방과후 프로그램'}
+              </h3>
+              <div className="p-4 space-y-4">
+                {days.map((day, dayNum) => {
+                  const dayIndex = dayNum + 1;
+                  const programs = afterSchoolPrograms[scheduleMode][dayIndex] || [];
+                  
+                  return (
+                    <div key={dayIndex} className="border rounded-lg p-3">
+                      <div className="flex justify-between items-center mb-2">
+                        <h4 className="font-medium text-gray-700">{day}요일</h4>
+                        {editMode && (
+                          <button
+                            onClick={() => addAfterSchoolProgram(dayIndex)}
+                            className="text-sm text-blue-600 hover:text-blue-700"
+                          >
+                            + 추가
+                          </button>
+                        )}
+                      </div>
+                      
+                      {programs.length === 0 ? (
+                        <p className="text-sm text-gray-400">프로그램 없음</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {programs.map(program => (
+                            <div key={program.id} className="flex gap-2 items-center">
+                              {editMode ? (
+                                <>
+                                  <input
+                                    type="text"
+                                    value={program.name}
+                                    onChange={(e) => updateAfterSchoolProgram(dayIndex, program.id, 'name', e.target.value)}
+                                    placeholder="프로그램명"
+                                    className="flex-1 px-2 py-1 border rounded text-sm"
+                                  />
+                                  <input
+                                    type="time"
+                                    value={program.start}
+                                    onChange={(e) => updateAfterSchoolProgram(dayIndex, program.id, 'start', e.target.value)}
+                                    className="px-2 py-1 border rounded text-sm"
+                                  />
+                                  <span>~</span>
+                                  <input
+                                    type="time"
+                                    value={program.end}
+                                    onChange={(e) => updateAfterSchoolProgram(dayIndex, program.id, 'end', e.target.value)}
+                                    className="px-2 py-1 border rounded text-sm"
+                                  />
+                                  <button
+                                    onClick={() => deleteAfterSchoolProgram(dayIndex, program.id)}
+                                    className="text-red-500 hover:text-red-700"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </>
+                              ) : (
+                                <div className="flex-1 flex justify-between items-center">
+                                  <span className={`text-sm font-medium px-2 py-1 rounded ${getSubjectColor(program.name)}`}>
+                                    {program.name || '미입력'}
+                                  </span>
+                                  <span className="text-sm text-gray-500">
+                                    {program.start} ~ {program.end}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 시간 설정 탭 */}
+        {activeTab === 'schedule' && (
+          <div className="space-y-4">
+            {/* 기본 설정 */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                기본 설정
+                {scheduleMode === 'vacation' && <Sun className="w-4 h-4 text-orange-500" />}
+              </h3>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      시간표 유형
+                    </label>
+                    <select
+                      value={schoolSettings[scheduleMode].scheduleType}
+                      onChange={(e) => updateSchoolSettings('scheduleType', e.target.value)}
+                      disabled={!editMode}
+                      className="w-full px-3 py-2 border rounded-lg disabled:bg-gray-100"
+                    >
+                      <option value="regular">일반 시간표 (1교시, 2교시...)</option>
+                      <option value="block">블록 시간표 (1블록, 2블록...)</option>
+                      <option value="mixed">혼합형 (블록+교시 표시)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      첫 수업 시작시간
+                    </label>
+                    <select
+                      value={schoolSettings[scheduleMode].startTime}
+                      onChange={(e) => updateSchoolSettings('startTime', e.target.value)}
+                      disabled={!editMode}
+                      className="w-full px-3 py-2 border rounded-lg disabled:bg-gray-100"
+                    >
+                      <option value="08:30">8:30</option>
+                      <option value="08:40">8:40</option>
+                      <option value="08:50">8:50</option>
+                      <option value="09:00">9:00</option>
+                      <option value="09:10">9:10</option>
+                      <option value="09:20">9:20</option>
+                    </select>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      수업 시간 (분)
+                    </label>
+                    <select
+                      value={schoolSettings[scheduleMode].periodDuration}
+                      onChange={(e) => updateSchoolSettings('periodDuration', e.target.value)}
+                      disabled={!editMode}
+                      className="w-full px-3 py-2 border rounded-lg disabled:bg-gray-100"
+                    >
+                      <option value="30">30분</option>
+                      <option value="35">35분</option>
+                      <option value="40">40분</option>
+                      <option value="45">45분</option>
+                      <option value="50">50분</option>
+                      <option value="60">60분 (1시간)</option>
+                      <option value="70">70분</option>
+                      <option value="80">80분</option>
+                      <option value="90">90분 (1시간 30분)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      쉬는시간 (분)
+                    </label>
+                    <select
+                      value={schoolSettings[scheduleMode].breakDuration}
+                      onChange={(e) => updateSchoolSettings('breakDuration', e.target.value)}
+                      disabled={!editMode}
+                      className="w-full px-3 py-2 border rounded-lg disabled:bg-gray-100"
+                    >
+                      <option value="5">5분</option>
+                      <option value="10">10분</option>
+                      <option value="15">15분</option>
+                      <option value="20">20분</option>
+                      <option value="25">25분</option>
+                      <option value="30">30분</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      점심시간 (분)
+                    </label>
+                    <select
+                      value={schoolSettings[scheduleMode].lunchDuration || 50}
+                      onChange={(e) => updateSchoolSettings('lunchDuration', e.target.value)}
+                      disabled={!editMode}
+                      className="w-full px-3 py-2 border rounded-lg disabled:bg-gray-100"
+                    >
+                      <option value="30">30분</option>
+                      <option value="40">40분</option>
+                      <option value="45">45분</option>
+                      <option value="50">50분</option>
+                      <option value="55">55분</option>
+                      <option value="60">60분 (1시간)</option>
+                      <option value="70">70분</option>
+                      <option value="80">80분</option>
+                      <option value="90">90분 (1시간 30분)</option>
+                    </select>
+                  </div>
+                </div>
+                
+                {scheduleMode === 'regular' && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="morningReading"
+                        checked={schoolSettings[scheduleMode].morningReadingEnabled}
+                        onChange={(e) => updateSchoolSettings('morningReadingEnabled', e.target.checked)}
+                        disabled={!editMode}
+                        className="rounded"
+                      />
+                      <label htmlFor="morningReading" className="text-sm text-gray-700">
+                        아침독서 시간 (08:40~08:50)
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="shortDay"
+                        checked={schoolSettings[scheduleMode].shortDayEnabled}
+                        onChange={(e) => updateSchoolSettings('shortDayEnabled', e.target.checked)}
+                        disabled={!editMode}
+                        className="rounded"
+                      />
+                      <label htmlFor="shortDay" className="text-sm text-gray-700">
+                        수·금요일 단축수업 (급식 후 하교)
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {editMode && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    onClick={generateAutoSchedule}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+                  >
+                    자동 시간표 생성
+                  </button>
+                  <div className="flex gap-2">
+                    <span className="text-sm text-gray-600 flex items-center">빠른 설정:</span>
+                    {Object.entries(GRADE_TEMPLATES).map(([grade, template]) => (
+                      <button
+                        key={grade}
+                        onClick={() => {
+                          updateSchoolSettings('scheduleType', template.scheduleType);
+                          setFavoriteSubjects(template.subjects);
+                          setTimeout(() => generateAutoSchedule(), 100);
+                        }}
+                        className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"
+                      >
+                        {grade}
+                      </button>
+                    ))}
+                  </div>
+                  {schoolSettings[scheduleMode].scheduleType === 'block' && (
+                    <div className="w-full text-sm text-gray-600 flex items-center gap-1">
+                      <AlertCircle className="w-4 h-4" />
+                      블록 시간표는 1-2학년 맞춤형 프로그램용입니다
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 세부 시간 설정 */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex justify-between items-center mb-4">
+                <div>
+                  <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                    {scheduleMode === 'vacation' ? '방학 시간표 설정' : '정규 시간표 설정'}
+                    {scheduleMode === 'vacation' && <Sun className="w-4 h-4 text-orange-500" />}
+                  </h3>
+                  <p className="text-sm text-gray-600 mt-1">
+                    총 {scheduleStructure.filter(p => !p.isBreak).length}개 수업, 
+                    쉬는시간 {scheduleStructure.filter(p => p.isBreak).length}개
+                  </p>
+                </div>
+                <div className="flex items-center gap-4">
+                  {editMode && (
+                    <>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={autoAdjustTime}
+                          onChange={(e) => setAutoAdjustTime(e.target.checked)}
+                          className="rounded"
+                        />
+                        <span className="text-sm text-gray-600">자동 시간 조정</span>
+                      </label>
+                      <button
+                        onClick={addPeriod}
+                        className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 flex items-center gap-1"
+                      >
+                        <Plus className="w-4 h-4" />
+                        시간 추가
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                {Array.isArray(scheduleStructure) && scheduleStructure.map((period, index) => (
+                  <div key={period.id} className="flex gap-2 items-center p-2 border rounded">
+                    {editMode ? (
+                      <>
+                        <input
+                          type="text"
+                          value={period.name}
+                          onChange={(e) => updatePeriod(period.id, 'name', e.target.value)}
+                          className="w-32 px-2 py-1 border rounded"
+                        />
+                        <input
+                          type="time"
+                          value={period.start}
+                          onChange={(e) => updatePeriod(period.id, 'start', e.target.value)}
+                          className="px-2 py-1 border rounded"
+                        />
+                        <span>~</span>
+                        <input
+                          type="time"
+                          value={period.end}
+                          onChange={(e) => updatePeriod(period.id, 'end', e.target.value)}
+                          className="px-2 py-1 border rounded"
+                        />
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={period.isBreak}
+                            onChange={(e) => updatePeriod(period.id, 'isBreak', e.target.checked)}
+                          />
+                          <span className="text-sm">쉬는시간</span>
+                        </label>
+                        <button
+                          onClick={() => deletePeriod(period.id)}
+                          className="ml-auto text-red-500 hover:text-red-700"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className={`w-32 font-medium ${period.isBreak ? 'text-orange-600' : ''}`}>
+                          {period.name}
+                        </span>
+                        <span className="text-gray-600">
+                          {period.start} ~ {period.end}
+                        </span>
+                        {period.isBreak && (
+                          <span className="text-sm text-orange-600">(쉬는시간)</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-800">
+              <p className="font-medium mb-2">💡 사용 팁</p>
+              <ul className="space-y-1 text-blue-600">
+                <li>• <strong>시간표 유형 선택:</strong> 일반(1,2,3교시) / 블록(1블록,2블록) / 혼합형</li>
+                <li>• <strong>수금 단축수업:</strong> 체크하면 수·금은 급식 후 하교로 자동 설정</li>
+                <li>• <strong>자동 생성 후</strong> 세부 시간은 아래에서 수정 가능</li>
+                <li>• 자동 시간 조정: 한 교시 끝시간 변경 시 다음 교시 시작시간 자동 조정</li>
+                <li>• <span className="text-red-600 font-medium">주의: 교시 삭제 시 해당 교시의 모든 과목도 삭제됩니다</span></li>
+              </ul>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default TimetableApp;
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<TimetableApp />);
+    </script>
+</body>
+</html>
