@@ -1414,12 +1414,12 @@
                                     return (
                                       <td 
                                         key={dayNum} 
-                                        className={`p-2 ${editMode && !isShortDay ? 'cursor-pointer hover:bg-gray-50' : ''} transition-colors`}
-                                        onClick={() => !isShortDay && handleCellClick(dayIndex, period.id)}
+                                        className={`p-2 ${editMode ? 'cursor-pointer hover:bg-gray-50' : ''} transition-colors`}
+                                        onClick={() => handleCellClick(dayIndex, period.id)}  // 이 부분 수정!
                                       >
                                         <div className={`rounded p-2 text-center text-sm font-medium border transition-all ${
                                           subject ? getSubjectColor(subject) : 'text-gray-400 border-gray-200'
-                                        } ${editMode && !isShortDay ? 'hover:scale-105 hover:shadow-md' : ''}`}>
+                                        } ${editMode ? 'hover:scale-105 hover:shadow-md' : ''}`}>
                                           {subject || (editMode ? '클릭' : '-')}
                                         </div>
                                       </td>
